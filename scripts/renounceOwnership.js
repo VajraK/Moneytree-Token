@@ -1,4 +1,6 @@
 const readline = require("readline");
+const hre = require("hardhat"); // Import Hardhat runtime environment
+const ethers = hre.ethers;
 
 async function main() {
   // Set up readline to get input from the console
@@ -7,52 +9,67 @@ async function main() {
     output: process.stdout,
   });
 
-  // Prompt for the contract (factory) name
-  rl.question("Enter the contract (factory) name (or press Enter for default 'MoneytreeToken'): ", async (contractName) => {
+  // Helper function to prompt user input
+  const askQuestion = (question) => {
+    return new Promise((resolve) => {
+      rl.question(question, (answer) => {
+        resolve(answer);
+      });
+    });
+  };
+
+  try {
+    // Prompt for the contract (factory) name
+    let contractName = await askQuestion(
+      "Enter the contract (factory) name (or press Enter for default 'MoneytreeToken'): "
+    );
     // Use 'MoneytreeToken' as the default if no contract name is provided
     if (!contractName) {
       contractName = "MoneytreeToken";
     }
 
     // Prompt for the contract address
-    rl.question("Enter the deployed contract address: ", async (contractAddress) => {
-      try {
-        // Get the contract factory dynamically based on user input (or default)
-        const Token = await ethers.getContractFactory(contractName);
+    let contractAddress = await askQuestion("Enter the deployed contract address: ");
 
-        // Attach to the deployed contract at the provided address
-        const token = await Token.attach(contractAddress);
+    // Validate the contract address
+    if (!ethers.utils.isAddress(contractAddress)) {
+      throw new Error("Invalid contract address.");
+    }
 
-        // Check the current owner
-        const currentOwner = await token.owner();
-        console.log("Current owner is:", currentOwner);
+    // Get the contract factory dynamically based on user input (or default)
+    const Token = await ethers.getContractFactory(contractName);
 
-        // Confirm renouncement
-        rl.question("Do you want to renounce ownership? (yes/no): ", async (answer) => {
-          if (answer.toLowerCase() === "yes") {
-            // Call renounceOwnership function
-            const tx = await token.renounceOwnership();
-            await tx.wait(); // Wait for the transaction to be mined
-            console.log("Ownership has been renounced.");
+    // Attach to the deployed contract at the provided address
+    const token = await Token.attach(contractAddress);
 
-            // Check the new owner (should be the zero address)
-            const newOwner = await token.owner();
-            console.log("New owner is:", newOwner);
-          } else {
-            console.log("Ownership renouncement canceled.");
-          }
+    // Check the current owner
+    const currentOwner = await token.owner();
+    console.log("Current owner is:", currentOwner);
 
-          rl.close(); // Close the readline interface
-        });
-      } catch (error) {
-        console.error("Error during the renounce process:", error);
-        rl.close(); // Close the readline interface in case of error
-      }
-    });
-  });
+    // Confirm renouncement
+    let answer = await askQuestion("Do you want to renounce ownership? (yes/no): ");
+    if (answer.toLowerCase() === "yes") {
+      // Call renounceOwnership function
+      console.log("Renouncing ownership...");
+      const tx = await token.renounceOwnership();
+      console.log("Transaction sent. Waiting for confirmation...");
+      await tx.wait(); // Wait for the transaction to be mined
+      console.log("Ownership has been renounced.");
+
+      // Check the new owner (should be the zero address)
+      const newOwner = await token.owner();
+      console.log("New owner is:", newOwner);
+    } else {
+      console.log("Ownership renouncement canceled.");
+    }
+  } catch (error) {
+    console.error("Error during the renounce process:", error.message);
+  } finally {
+    rl.close(); // Close the readline interface
+  }
 }
 
 main().catch((error) => {
-  console.error(error);
+  console.error("Script failed with error:", error.message);
   process.exitCode = 1;
 });

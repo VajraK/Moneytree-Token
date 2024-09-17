@@ -1,4 +1,7 @@
 const readline = require("readline");
+const fs = require('fs');
+const yaml = require('js-yaml');
+const hre = require("hardhat"); // Import Hardhat to use its runtime environment
 
 async function main() {
   // Set up readline to get input from the console
@@ -7,65 +10,113 @@ async function main() {
     output: process.stdout,
   });
 
-  // Prompt for the contract (factory) name
-  rl.question("Enter the contract (factory) name (or press Enter for default 'MoneytreeToken'): ", async (contractName) => {
-    // Use 'MoneytreeToken' as the default if no contract name is provided
-    if (!contractName) {
-      contractName = "MoneytreeToken";
+  // Helper function to prompt user input
+  const askQuestion = (question) => {
+    return new Promise((resolve) => rl.question(question, resolve));
+  };
+
+  try {
+    // Load the YAML configuration file
+    const config = yaml.load(fs.readFileSync('./config.yaml', 'utf8'));
+
+    // Prompt for the network (Mainnet or Sepolia)
+    let networkChoice = await askQuestion(
+      "Choose the network (press Enter for default 'mainnet' or type 'sepolia'): "
+    );
+    networkChoice = networkChoice.toLowerCase();
+
+    // Set to mainnet if user presses Enter or inputs nothing
+    let network;
+    if (networkChoice === 'sepolia') {
+      network = 'sepolia';
+    } else if (networkChoice === 'mainnet' || networkChoice === '') {
+      network = 'mainnet';
+    } else {
+      console.log("Invalid network choice. Defaulting to 'mainnet'.");
+      network = 'mainnet';
     }
 
-    // Prompt for the initial supply
-    rl.question("Enter the initial supply (or press Enter for default '1000000'): ", async (initialSupply) => {
-      // Default initial supply to 1000000 if no input is given
-      if (!initialSupply) {
-        initialSupply = "1000000";
-      }
+    // Fetch the swap router address from config based on selected network
+    const swapRouterAddress = config.SwapRouter[network];
 
-      try {
-        const [deployer] = await ethers.getSigners();
+    // Validate that the config contains the swap router address
+    if (!swapRouterAddress) {
+      throw new Error(`Missing Router address for ${network} in config.yaml`);
+    }
 
-        console.log("Deploying contracts with the account:", deployer.address);
+    // Prompt for other required inputs for deployment
+    let contractName = await askQuestion(
+      "Enter the contract (factory) name (or press Enter for default 'MoneytreeToken'): "
+    );
+    contractName = contractName || "MoneytreeToken";
 
-        // Convert initialSupply to a BigNumber with 18 decimals
-        const formattedSupply = ethers.utils.parseUnits(initialSupply, 18); // Adjust for 18 decimal places
+    let initialSupply = await askQuestion(
+      "Enter the initial supply (or press Enter for default '1000000'): "
+    );
+    initialSupply = initialSupply || "1000000";
 
-        // Get the contract factory dynamically based on user input (or default)
-        const Token = await ethers.getContractFactory(contractName);
+    // Validate initialSupply is a positive number
+    if (isNaN(initialSupply) || Number(initialSupply) <= 0) {
+      throw new Error("Invalid initial supply. It must be a positive number.");
+    }
 
-        // Estimate gas for deployment
-        const estimatedGas = await Token.signer.estimateGas(Token.getDeployTransaction(formattedSupply));
-        
-        // Get the current gas price
-        const gasPrice = await Token.signer.getGasPrice();
+    // Get the signer from the Hardhat environment
+    const [deployer] = await hre.ethers.getSigners();
 
-        // Calculate the total gas fee
-        const totalFee = estimatedGas.mul(gasPrice);
-        const totalFeeInEther = ethers.utils.formatEther(totalFee); // Convert to Ether for readability
+    console.log("Deploying contracts with the account:", deployer.address);
 
-        console.log(`Estimated deployment gas fee: ${totalFeeInEther} ETH`);
+    // Check the balance of the deployer's account
+    const balance = await deployer.getBalance();
+    const balanceInEther = hre.ethers.utils.formatEther(balance);
+    console.log(`Current account balance: ${balanceInEther} ETH`);
 
-        // Confirm with the user
-        rl.question("Do you want to proceed with the deployment? (yes/no): ", async (answer) => {
-          if (answer.toLowerCase() === "yes") {
-            // Deploy the contract with the provided initialSupply
-            const token = await Token.deploy(formattedSupply);
+    // Convert initialSupply to BigNumber with 18 decimals
+    const formattedSupply = hre.ethers.utils.parseUnits(initialSupply, 18);
 
-            // Wait for the deployment to be confirmed
-            await token.deployed();
+    // Get the contract factory
+    const Token = await hre.ethers.getContractFactory(contractName);
 
-            console.log(`${contractName} token deployed to:`, token.address);
-          } else {
-            console.log("Deployment canceled.");
-          }
+    // Estimate gas for deployment
+    const deployTransaction = Token.getDeployTransaction(formattedSupply, swapRouterAddress);
+    const estimatedGas = await Token.signer.estimateGas(deployTransaction);
 
-          rl.close(); // Close the readline interface
-        });
-      } catch (error) {
-        console.error("Error deploying contract:", error);
-        rl.close(); // Close the readline interface in case of error
-      }
-    });
-  });
+    // Get the current gas price
+    const gasPrice = await Token.signer.getGasPrice();
+
+    // Calculate the total gas fee
+    const totalFee = estimatedGas.mul(gasPrice);
+    const totalFeeInEther = hre.ethers.utils.formatEther(totalFee); // Convert to Ether for readability
+
+    console.log(`Estimated deployment gas fee: ${totalFeeInEther} ETH`);
+
+    // Check if there are enough funds
+    if (balance.lt(totalFee)) {
+      console.log(`Insufficient funds: you have ${balanceInEther} ETH but need approximately ${totalFeeInEther} ETH.`);
+      throw new Error('Insufficient funds to cover gas fees for deployment.');
+    }
+
+    // Confirm with the user
+    const answer = await askQuestion(
+      `Do you want to proceed with the deployment to ${network}? (yes/no): `
+    );
+
+    if (answer.toLowerCase() === "yes") {
+      // Deploy the contract with the provided initialSupply and Uniswap router address
+      const token = await Token.deploy(formattedSupply, swapRouterAddress);
+
+      // Wait for the deployment to be confirmed
+      await token.deployed();
+
+      console.log(`${contractName} token deployed to:`, token.address);
+    } else {
+      console.log("Deployment canceled.");
+    }
+
+  } catch (error) {
+    console.error("Error deploying contract:", error.message); // Improved error logging
+  } finally {
+    rl.close(); // Close the readline interface
+  }
 }
 
 main().catch((error) => {

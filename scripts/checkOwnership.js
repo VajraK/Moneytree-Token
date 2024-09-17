@@ -1,4 +1,6 @@
 const readline = require("readline");
+const hre = require("hardhat"); // Import Hardhat runtime environment
+const ethers = hre.ethers;
 
 async function main() {
   // Set up readline to get input from the console
@@ -7,35 +9,50 @@ async function main() {
     output: process.stdout,
   });
 
-  // Prompt for the contract (factory) name
-  rl.question("Enter the contract (factory) name (or press Enter for default 'MoneytreeToken'): ", async (contractName) => {
-    // Use 'RenounceMoneytreeToken' as the default if no contract name is provided
+  // Helper function to prompt user input
+  const askQuestion = (question) => {
+    return new Promise((resolve) => {
+      rl.question(question, (answer) => {
+        resolve(answer);
+      });
+    });
+  };
+
+  try {
+    // Prompt for the contract (factory) name
+    let contractName = await askQuestion(
+      "Enter the contract (factory) name (or press Enter for default 'MoneytreeToken'): "
+    );
+    // Use 'MoneytreeToken' as the default if no contract name is provided
     if (!contractName) {
       contractName = "MoneytreeToken";
     }
 
     // Prompt for the contract address
-    rl.question("Enter the deployed contract address: ", async (contractAddress) => {
-      try {
-        // Get the contract factory dynamically based on user input (or default)
-        const Token = await ethers.getContractFactory(contractName);
+    let contractAddress = await askQuestion("Enter the deployed contract address: ");
 
-        // Attach to the deployed contract at the provided address
-        const token = await Token.attach(contractAddress);
+    // Validate the contract address
+    if (!ethers.utils.isAddress(contractAddress)) {
+      throw new Error("Invalid contract address.");
+    }
 
-        // Check the current owner
-        const currentOwner = await token.owner();
-        console.log("Current owner is:", currentOwner);
-      } catch (error) {
-        console.error("Error checking ownership:", error);
-      } finally {
-        rl.close(); // Close the readline interface
-      }
-    });
-  });
+    // Get the contract factory dynamically based on user input (or default)
+    const Token = await ethers.getContractFactory(contractName);
+
+    // Attach to the deployed contract at the provided address
+    const token = await Token.attach(contractAddress);
+
+    // Check the current owner
+    const currentOwner = await token.owner();
+    console.log("Current owner is:", currentOwner);
+  } catch (error) {
+    console.error("Error checking ownership:", error.message);
+  } finally {
+    rl.close(); // Close the readline interface
+  }
 }
 
 main().catch((error) => {
-  console.error(error);
+  console.error("Script failed with error:", error.message);
   process.exitCode = 1;
 });
