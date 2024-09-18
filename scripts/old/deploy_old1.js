@@ -1,4 +1,6 @@
 const readline = require("readline");
+const fs = require('fs');
+const yaml = require('js-yaml');
 const hre = require("hardhat"); // Import Hardhat to use its runtime environment
 
 async function main() {
@@ -14,6 +16,9 @@ async function main() {
   };
 
   try {
+    // Load the YAML configuration file
+    const config = yaml.load(fs.readFileSync('./config.yaml', 'utf8'));
+
     // Prompt for the network (Mainnet or Sepolia)
     let networkChoice = await askQuestion(
       "Choose the network (press Enter for default 'mainnet' or type 'sepolia'): "
@@ -29,6 +34,14 @@ async function main() {
     } else {
       console.log("Invalid network choice. Defaulting to 'mainnet'.");
       network = 'mainnet';
+    }
+
+    // Fetch the swap router address from config based on selected network
+    const swapRouterAddress = config.SwapRouter[network];
+
+    // Validate that the config contains the swap router address
+    if (!swapRouterAddress) {
+      throw new Error(`Missing Router address for ${network} in config.yaml`);
     }
 
     // Prompt for other required inputs for deployment
@@ -64,11 +77,11 @@ async function main() {
     const Token = await hre.ethers.getContractFactory(contractName);
 
     // Estimate gas for deployment
-    const deployTransaction = Token.getDeployTransaction(formattedSupply);
-    const estimatedGas = await deployer.estimateGas(deployTransaction);
+    const deployTransaction = Token.getDeployTransaction(formattedSupply, swapRouterAddress);
+    const estimatedGas = await Token.signer.estimateGas(deployTransaction);
 
     // Get the current gas price
-    const gasPrice = await deployer.getGasPrice();
+    const gasPrice = await Token.signer.getGasPrice();
 
     // Calculate the total gas fee
     const totalFee = estimatedGas.mul(gasPrice);
@@ -88,8 +101,8 @@ async function main() {
     );
 
     if (answer.toLowerCase() === "yes") {
-      // Deploy the contract with the provided initialSupply
-      const token = await Token.deploy(formattedSupply);
+      // Deploy the contract with the provided initialSupply and Uniswap router address
+      const token = await Token.deploy(formattedSupply, swapRouterAddress);
 
       // Wait for the deployment to be confirmed
       await token.deployed();

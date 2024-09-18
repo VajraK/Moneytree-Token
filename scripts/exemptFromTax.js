@@ -54,6 +54,18 @@ async function main() {
       }
 
       const isAdding = action.toLowerCase() === "add";
+
+      // Check current exemption status before making any changes
+      const currentExemptStatus = await token.isTaxExempt(addressToUpdate);
+
+      if (isAdding && currentExemptStatus) {
+        console.log(`${addressToUpdate} is already tax-exempt. No changes needed.`);
+        return;
+      } else if (!isAdding && !currentExemptStatus) {
+        console.log(`${addressToUpdate} is not currently tax-exempt. No changes needed.`);
+        return;
+      }
+
       const confirmAction = await askQuestion(
         `You are about to ${isAdding ? "add" : "remove"} ${addressToUpdate} ${
           isAdding ? "to" : "from"
@@ -65,11 +77,22 @@ async function main() {
           const tx = await token.setTaxExemption(addressToUpdate, isAdding);
           console.log("Waiting for transaction to be mined...");
           await tx.wait();
-          console.log(
-            `${addressToUpdate} was successfully ${
-              isAdding ? "added to" : "removed from"
-            } the tax-exempt list.`
-          );
+
+          // Verify that the address was successfully added or removed
+          const isExempt = await token.isTaxExempt(addressToUpdate);
+          if (isExempt === isAdding) {
+            console.log(
+              `${addressToUpdate} was successfully ${
+                isAdding ? "added to" : "removed from"
+              } the tax-exempt list.`
+            );
+          } else {
+            console.error(
+              `Transaction failed: ${
+                isAdding ? "Addition" : "Removal"
+              } of ${addressToUpdate} did not go through.`
+            );
+          }
         } catch (error) {
           console.error(
             `Error ${isAdding ? "adding" : "removing"} address:`,
